@@ -2,7 +2,7 @@
 
 **Production-Ready, Modular, Offline AI Assistant with RAG Dataset Integration**
 
-<img width="1920" height="1280" alt="image" src="https://github.com/user-attachments/assets/256ff118-9089-4210-a580-1e738e7be306"
+<img width="1920" height="1280" alt="image" src="https://github.com/user-attachments/assets/256ff118-9089-4210-a580-1e738e7be306"/>
 
 ---
 
