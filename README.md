@@ -32,32 +32,6 @@ This setup is **production-ready**, reproducible, and designed for offline-first
 
 ---
 
-## Architecture
-
-```mermaid
-flowchart TD
-    A[Live USB Boot] --> B[Systemd Activation Scripts]
-    B --> C[Preload Ollama & WebUI Images]
-    B --> D[Set up Firewall & Hardening]
-    B --> E[Auto-launch Firefox]
-
-    C --> F[Podman Network: ollama-net]
-    F --> G[Ollama LLM Container]
-    F --> H[Open WebUI Container]
-
-    G -->|API| H
-    E -->|Browser GUI| H
-
-    subgraph RAG Tool
-        I[rag-dataset-prep.py] --> J[Process PDFs, HTML, Markdown, Text, URLs]
-        J --> K[Chunked Dataset Output]
-    end
-
-    A --> RAG Tool
-````
-
----
-
 ## Installation
 
 ### ISO Generation
