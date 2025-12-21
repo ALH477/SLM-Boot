@@ -1,4 +1,4 @@
-# flake.nix – Oriented Towards Kexec Bundle and VM Disk Image Outputs
+# flake.nix – CachyOS BORE Kernel Enabled in All Profiles
 {
   description = "Offline AI Assistant (Graphical ISO + Headless Kexec/VM Profiles)";
 
@@ -6,7 +6,7 @@
   # BSD 3-Clause License
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/24.11";  # Pinned for reproducibility
+    nixpkgs.url = "github:NixOS/nixpkgs/24.11";
     nixos-generators = {
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -29,6 +29,8 @@
         self.nixosModules.hardening
         self.nixosModules.production-extras
         self.nixosModules.rag-dataset-tool
+        self.nixosModules.kernel-cachyos-bore  # Imported
+        { boot.kernel.cachyos-bore.enable = true; }  # Explicitly enabled
       ];
 
       # Shared headless modules (for both kexec and VM)
@@ -42,6 +44,8 @@
         self.nixosModules.hardening
         self.nixosModules.production-extras
         self.nixosModules.rag-dataset-tool
+        self.nixosModules.kernel-cachyos-bore  # Imported
+        { boot.kernel.cachyos-bore.enable = true; }  # Explicitly enabled
       ];
     in
     {
@@ -60,21 +64,21 @@
           modules = graphicalModules ++ [ self.nixosModules.voice-pipeline ];
         };
 
-        # Headless kexec bundle (quick overlay boot on existing Linux)
+        # Headless kexec bundle
         headless-kexec = nixos-generators.nixosGenerate {
           inherit system;
           format = "kexec";
           modules = headlessModules;
         };
 
-        # Headless VM disk image (qcow2 for QEMU/KVM/Proxmox/libvirt)
+        # Headless VM disk image (qcow2)
         headless-vm = nixos-generators.nixosGenerate {
           inherit system;
           format = "qcow2";
           modules = headlessModules;
         };
 
-        # Optional: Raw disk image for other hypervisors
+        # Headless raw image
         headless-raw = nixos-generators.nixosGenerate {
           inherit system;
           format = "raw";
@@ -95,6 +99,7 @@
         voice-pipeline = ./modules/voice-pipeline.nix;
         production-extras = ./modules/production-extras.nix;
         rag-dataset-tool = ./modules/rag-dataset-tool.nix;
+        kernel-cachyos-bore = ./modules/kernel-cachyos-bore.nix;  # Added
 
         default = ./modules/default.nix;
       };
