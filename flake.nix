@@ -12,6 +12,7 @@
 #   - CachyOS BORE kernel enabled in all profiles for better interactivity
 #   - SLM-Assist (local DSPy RAG with Ollama + Gradio) enabled with delayed start
 #   - Automatic Floorp browser launch to Gradio UI on graphical profiles
+#   - Corpus baked into /var/lib/slm-assist via tmpfiles
 #   - Persistence for /var/lib/slm-assist
 #
 # Copyright © 2025 DeMoD LLC
@@ -57,8 +58,14 @@
             dataDir = "/var/lib/slm-assist";
             exposeExternally = false;
             delayStartSec = 45;
-            autoOpenBrowser = true;               # ← Opens Floorp to Gradio after delay
+            autoOpenBrowser = true;               # Opens Floorp to Gradio after delay
           };
+          # Bake the corpus into the image
+          systemd.tmpfiles.rules = [
+            "d /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+            "C /var/lib/slm-assist/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
+            "Z /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+          ];
           environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
         }
       ];
@@ -88,6 +95,12 @@
             delayStartSec = 45;
             autoOpenBrowser = false;              # No browser on headless
           };
+          # Bake the corpus into the image (same as graphical)
+          systemd.tmpfiles.rules = [
+            "d /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+            "C /var/lib/slm-assist/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
+            "Z /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+          ];
           environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
         }
       ];
@@ -151,17 +164,7 @@
         production-extras     = ./modules/production-extras.nix;
         rag-dataset-tool      = ./modules/rag-dataset-tool.nix;
         kernel-cachyos-bore   = ./modules/kernel-cachyos-bore.nix;
-
-        # Default shared configuration (optional)
         default               = ./modules/default.nix;
-
-      systemd.tmpfiles.rules = [
-  "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
-  "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/my-tech-corpus.jsonl}"
-  "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
-];
-
-
       };
     };
 }
