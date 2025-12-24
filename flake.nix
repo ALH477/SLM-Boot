@@ -154,6 +154,14 @@
 
         # Default shared configuration (optional)
         default               = ./modules/default.nix;
+
+      systemd.tmpfiles.rules = [
+  "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
+  "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/my-tech-corpus.jsonl}"
+  "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
+];
+
+
       };
     };
 }
