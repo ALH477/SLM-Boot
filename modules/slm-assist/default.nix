@@ -167,34 +167,32 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    # ────────────────────────────────────────────────────────────────
-    # Ollama system service (no invalid description override)
-    # ────────────────────────────────────────────────────────────────
-    services.ollama = lib.mkMerge [
-      {
-        enable = true;
-      }
-      cfg.extraOllamaConfig
-    ];
+  # Ollama system service
+  services.ollama = lib.mkMerge [
+    {
+      enable = true;
+    }
+    cfg.extraOllamaConfig
+  ];
 
-    # Optional: custom systemd unit description (only if you want to change it)
-    # systemd.services.ollama = {
-    #   description = lib.mkForce "Ollama LLM Server (custom for SLM-Assist)";
-    # };
+  # Force our preferred systemd unit description (overrides nixpkgs default)
+  systemd.services.ollama = {
+    description = lib.mkForce "Ollama LLM Server";
+  };
 
-    # Pre-pull the selected model
-    systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
-      description = "Pre-pull Ollama model for SLM Assist";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "ollama.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.ollama}/bin/ollama pull ${cfg.ollamaModel}";
-        RemainAfterExit = true;
-        User = "ollama";
-        Group = "ollama";
-      };
+  # Pre-pull the selected model
+  systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
+    description = "Pre-pull Ollama model for SLM Assist";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "ollama.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.ollama}/bin/ollama pull ${cfg.ollamaModel}";
+      RemainAfterExit = true;
+      User = "ollama";
+      Group = "ollama";
     };
+  };
 
     # ────────────────────────────────────────────────────────────────
     # Gradio RAG application service
