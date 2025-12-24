@@ -4,13 +4,13 @@
 #   - Local DSPy RAG system using Ollama + Gradio web interface
 #   - Delayed startup to give Ollama time to initialize
 #   - Optional automatic browser launch (Floorp) to the Gradio UI
+#   - Corpus baked into dataDir via tmpfiles
 #
 # Features:
 #   - Ollama runs as system service with pre-pull of selected model
 #   - Gradio app runs as DynamicUser service
 #   - Configurable delay before Gradio starts
 #   - Optional Floorp auto-launch on graphical profiles
-#   - Corpus baked into dataDir via tmpfiles
 #
 # Usage in flake.nix:
 #   services.slm-assist = {
@@ -24,15 +24,15 @@
 let
   cfg = config.services.slm-assist;
 
-  # Fetch and build dspy-ai from PyPI (not in nixpkgs)
+  # Custom dspy-ai from PyPI (not in nixpkgs)
   dspyAi = pkgs.python312Packages.buildPythonPackage rec {
     pname = "dspy-ai";
-    version = "2.5.0";  # latest stable as of late 2025 – update if needed
+    version = "2.5.0";  # latest stable – check pypi.org/project/dspy-ai for updates
     format = "pyproject";
 
     src = pkgs.fetchPypi {
       inherit pname version;
-      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash (see below)
+      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # REPLACE with real hash
     };
 
     nativeBuildInputs = with pkgs.python312Packages; [
@@ -52,29 +52,70 @@ let
       backoff
       joblib
       numpy
-      # add more deps from https://pypi.org/project/dspy-ai/#files or setup.py if build fails
     ];
 
-    doCheck = false;  # skip tests for faster build (safe for production image)
+    doCheck = false;  # skip tests for faster image build
   };
 
-  # Python environment with all required packages (including custom dspy-ai)
+  # Custom faiss-cpu from wheel
+  faissCpu = pkgs.python312Packages.buildPythonPackage rec {
+    pname = "faiss-cpu";
+    version = "1.8.0";
+    format = "wheel";
+
+    src = pkgs.fetchurl {
+      url = "https://files.pythonhosted.org/packages/source/f/faiss-cpu/faiss_cpu-1.8.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
+      hash = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";  # REPLACE with real hash
+    };
+
+    propagatedBuildInputs = with pkgs.python312Packages; [ numpy ];
+
+    doCheck = false;
+  };
+
+  # Custom sentence-transformers from PyPI
+  sentenceTransformers = pkgs.python312Packages.buildPythonPackage rec {
+    pname = "sentence-transformers";
+    version = "3.1.1";
+    format = "pyproject";
+
+    src = pkgs.fetchPypi {
+      inherit pname version;
+      hash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";  # REPLACE with real hash
+    };
+
+    nativeBuildInputs = with pkgs.python312Packages; [
+      setuptools
+      wheel
+    ];
+
+    propagatedBuildInputs = with pkgs.python312Packages; [
+      transformers
+      torch
+      numpy
+      scikit-learn
+      scipy
+      nltk
+      huggingface-hub
+    ];
+
+    doCheck = false;
+  };
+
+  # Final Python environment
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
-    dspyAi           # ← our custom package
-    faiss-cpu
+    dspyAi
+    faissCpu
     ujson
-    sentence-transformers
+    sentenceTransformers
     numpy
     gradio
   ]);
 
-  # Path to the Gradio application script (relative to this module)
   scriptPath = "${./rag_app.py}";
 
-  # Whether delayed start is active
   delayEnabled = cfg.enable && cfg.delayStartSec > 0;
 
-  # URL where Gradio will be listening
   gradioUrl = "http://127.0.0.1:${toString cfg.gradioPort}";
 
 in {
@@ -84,7 +125,6 @@ in {
     ollamaModel = mkOption {
       type = types.str;
       default = "qwen3:0.6b-instruct-q5_K_M";
-      example = "qwen3:4b-instruct-q5_K_M";
       description = "Ollama model tag to pull and use";
     };
 
@@ -116,7 +156,7 @@ in {
       type = types.int;
       default = 0;
       example = 45;
-      description = "Delay (in seconds) before starting Gradio UI after boot";
+      description = "Delay (in seconds) before starting Gradio after boot";
     };
 
     autoOpenBrowser = mkOption {
@@ -128,18 +168,11 @@ in {
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service (no deprecated acceleration option)
+    # Ollama system service
     # ────────────────────────────────────────────────────────────────
-    services.ollama = lib.mkMerge [
-      {
-        enable = true;
-        # Optional GPU backend (uncomment one if you have hardware)
-        # package = pkgs.ollama-cuda;   # NVIDIA
-        # package = pkgs.ollama-rocm;   # AMD
-        # package = pkgs.ollama;        # CPU (default)
-      }
-      cfg.extraOllamaConfig
-    ];
+    services.ollama = {
+      enable = true;
+    } // cfg.extraOllamaConfig;
 
     # Pre-pull the selected model
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
@@ -194,7 +227,9 @@ in {
     systemd.timers.slm-assist-delayed = lib.mkIf delayEnabled {
       description = "Delayed startup timer for SLM Assist Gradio UI";
       wantedBy = [ "timers.target" ];
-      timerConfig.OnBootSec = "${toString cfg.delayStartSec}";
+      timerConfig = {
+        OnBootSec = "${toString cfg.delayStartSec}";
+      };
     };
 
     systemd.services.slm-assist-activator = lib.mkIf delayEnabled {
@@ -226,8 +261,8 @@ in {
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.floorp}/bin/floorp --new-window ${gradioUrl}";
-        User = "gdm";  # adjust to sddm/lightdm if needed
+        ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}";
+        User = "gdm";  # change to sddm/lightdm if needed
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
@@ -244,7 +279,7 @@ in {
     # ────────────────────────────────────────────────────────────────
     # System packages & firewall
     # ────────────────────────────────────────────────────────────────
-    environment.systemPackages = [ pkgs.ollama pkgs.floorp ];
+    environment.systemPackages = [ pkgs.ollama pkgs.floorp-bin ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.exposeExternally [
       cfg.gradioPort
