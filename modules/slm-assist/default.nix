@@ -6,19 +6,11 @@
 #   - Optional automatic browser launch (Floorp) to the Gradio UI
 #   - Corpus baked into dataDir via tmpfiles
 #
-# Features:
-#   - Ollama runs as system service with pre-pull of selected model
-#   - Gradio app runs as DynamicUser service
-#   - Configurable delay before Gradio starts
-#   - Optional Floorp auto-launch on graphical profiles
+# Changes for offline model support (Dec 2025):
+#   - Model files are expected in ${./models/<model-name>} in the flake repo
+#   - Pre-pull service is disabled
+#   - Model blobs/manifests are copied into /var/lib/ollama/models at boot
 #
-# Usage in flake.nix:
-#   services.slm-assist = {
-#     enable = true;
-#     delayStartSec = 45;
-#     autoOpenBrowser = true;   # only useful on graphical profiles
-#     ...
-#   };
 { config, lib, pkgs, ... }:
 
 let
@@ -54,28 +46,22 @@ let
     ];
 
     doCheck = false;
-    # Skip import check - dspy tries to create cache directories on import
-    # which fails in the Nix sandbox. Will work fine at runtime.
     pythonImportsCheck = [ ];
   };
 
-  # Final Python environment using official nixpkgs packages where possible
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
-    dspyAi                  # custom (not in nixpkgs)
-    faiss                   # official faiss (CPU version) from nixpkgs
-    sentence-transformers   # official package from nixpkgs
+    dspyAi
+    faiss
+    sentence-transformers
     ujson
     numpy
     gradio
   ]);
 
-  # Path to the Gradio application script (must exist in the same directory as this file)
   scriptPath = "${./rag_app.py}";
 
-  # Whether delayed startup is active
   delayEnabled = cfg.enable && cfg.delayStartSec > 0;
 
-  # URL where Gradio will be listening (used for Floorp auto-launch)
   gradioUrl = "http://127.0.0.1:${toString cfg.gradioPort}";
 
 in {
@@ -84,9 +70,9 @@ in {
 
     ollamaModel = mkOption {
       type = types.str;
-      default = "qwen3:0.6b-instruct-q5_K_M";
-      example = "qwen3:4b-instruct-q5_K_M";
-      description = "Ollama model tag to pull and use (e.g. qwen3:4b-instruct-q5_K_M, llama3.1:8b, phi4:mini)";
+      default = "qwen3:0.6b";
+      example = "qwen3:4b";
+      description = "Ollama model tag (used for naming and reference; actual files must be pre-baked)";
     };
 
     gradioPort = mkOption {
@@ -104,13 +90,13 @@ in {
     extraOllamaConfig = mkOption {
       type = types.attrs;
       default = { };
-      description = "Extra configuration attributes passed to services.ollama (e.g. package override)";
+      description = "Extra configuration attributes passed to services.ollama";
     };
 
     exposeExternally = mkOption {
       type = types.bool;
       default = false;
-      description = "Whether to open the Gradio port in the firewall (not recommended unless needed)";
+      description = "Whether to open the Gradio port in the firewall";
     };
 
     delayStartSec = mkOption {
@@ -120,7 +106,6 @@ in {
       description = ''
         Delay (in seconds) before starting the Gradio UI after boot.
         Useful to ensure Ollama is fully initialized and responsive.
-        Set to 0 to disable delay (immediate start).
       '';
     };
 
@@ -129,37 +114,29 @@ in {
       default = false;
       description = ''
         Automatically open Floorp browser to the Gradio interface after the delay timer fires.
-        Only effective on graphical profiles (e.g. live ISO with desktop).
+        Only effective on graphical profiles.
       '';
     };
   };
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service
+    # Ollama system service – no automatic pulling
     # ────────────────────────────────────────────────────────────────
     services.ollama = lib.mkMerge [
       {
         enable = true;
-        # Optional: choose GPU backend (uncomment one if needed)
-        # package = pkgs.ollama-cuda;   # for NVIDIA
-        # package = pkgs.ollama-rocm;   # for AMD
+        # Prevent any declarative model loading / pulling
+        loadModels = lib.mkForce [ ];
+        # Optional: GPU if needed
+        # package = pkgs.ollama-cuda;
       }
       cfg.extraOllamaConfig
     ];
 
-    # Pre-pull the selected model so it's ready when needed
+    # Explicitly disable the old prepull service
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
-      description = "Pre-pull Ollama model for SLM Assist";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "ollama.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.ollama}/bin/ollama pull ${cfg.ollamaModel}";
-        RemainAfterExit = true;
-        User = "ollama";
-        Group = "ollama";
-      };
+      enable = false;
     };
 
     # ────────────────────────────────────────────────────────────────
@@ -170,7 +147,6 @@ in {
       after = [
         "network.target"
         "ollama.service"
-        "ollama-prepull-${cfg.ollamaModel}.service"
       ];
       wantedBy = lib.mkIf (!delayEnabled) [ "multi-user.target" ];
       serviceConfig = {
@@ -192,6 +168,8 @@ in {
       environment = {
         OLLAMA_HOST = "http://127.0.0.1:11434";
         PYTHONUNBUFFERED = "1";
+        # Belt-and-suspenders: tell Ollama exactly where models live
+        OLLAMA_MODELS = "/var/lib/ollama/models";
       };
     };
 
@@ -210,7 +188,6 @@ in {
       description = "Delayed activation of SLM Assist Gradio service";
       after = [
         "ollama.service"
-        "ollama-prepull-${cfg.ollamaModel}.service"
         "network.target"
       ];
       requires = [ "ollama.service" ];
@@ -236,20 +213,29 @@ in {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}";
-        # Alternative: open in new tab instead of new window
-        # ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin ${gradioUrl}";
         User = "gdm";  # adjust if using sddm, lightdm, etc.
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Data directory setup + corpus baking
+    # Data + model directory setup
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
+      # SLM-Assist data dir + corpus
       "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
       "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
       "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
+
+      # Ollama models directory + bake pre-downloaded model
+      "d /var/lib/ollama                0755 ollama ollama - -"
+      "d /var/lib/ollama/models         0755 ollama ollama - -"
+      "d /var/lib/ollama/models/blobs   0755 ollama ollama - -"
+      "d /var/lib/ollama/models/manifests 0755 ollama ollama - -"
+
+      # Copy your pre-downloaded model folder (adjust folder name if different)
+      # Example: ./models/qwen3-0.6b must exist in the flake repo
+      "C+ /var/lib/ollama/models - - - - ${./models/qwen3-0.6b}"
     ];
 
     # ────────────────────────────────────────────────────────────────
