@@ -8,8 +8,8 @@ import gradio as gr
 # ────────────────────────────────────────────────
 #  Configuration
 # ────────────────────────────────────────────────
-DATA_DIR        = "./data"
-CORPUS_PATH     = f"{DATA_DIR}/ragqa_arena_tech_corpus.jsonl"
+DATA_DIR = os.getenv("SLM_DATA_DIR", "/var/lib/slm-assist")
+CORPUS_PATH = os.path.join(DATA_DIR, "ragqa_arena_tech_corpus.jsonl")
 MAX_CHARS       = 6000
 EMBEDDER_MODEL  = "all-MiniLM-L6-v2"
 OLLAMA_MODEL    = "llama3"              # change to llama3.1, phi4, etc.
