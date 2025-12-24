@@ -10,6 +10,7 @@
 #   - Gradio app runs as DynamicUser service
 #   - Configurable delay before Gradio starts
 #   - Optional Floorp auto-launch on graphical profiles
+#   - Corpus baked into dataDir via tmpfiles
 #
 # Usage in flake.nix:
 #   services.slm-assist = {
@@ -18,7 +19,6 @@
 #     autoOpenBrowser = true;   # only useful on graphical profiles
 #     ...
 #   };
-
 { config, lib, pkgs, ... }:
 
 let
@@ -34,7 +34,7 @@ let
     gradio
   ]);
 
-  # Path to the Gradio application script
+  # Path to the Gradio application script (relative to this module)
   scriptPath = "${./rag_app.py}";
 
   # Whether delayed start is active
@@ -68,8 +68,8 @@ in {
 
     extraOllamaConfig = mkOption {
       type = types.attrs;
-      default = { acceleration = true; };
-      description = "Extra configuration attributes passed to services.ollama";
+      default = { };
+      description = "Extra configuration attributes passed to services.ollama (e.g. package override)";
     };
 
     exposeExternally = mkOption {
@@ -101,11 +101,18 @@ in {
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service
+    # Ollama system service (modern configuration – no deprecated acceleration)
     # ────────────────────────────────────────────────────────────────
-    services.ollama = {
-      enable = true;
-    } // cfg.extraOllamaConfig;
+    services.ollama = lib.mkMerge [
+      {
+        enable = true;
+        # Optional: choose GPU backend explicitly (uncomment one if needed)
+        # package = pkgs.ollama-cuda;     # for NVIDIA
+        # package = pkgs.ollama-rocm;     # for AMD
+        # package = pkgs.ollama;          # CPU fallback (default)
+      }
+      cfg.extraOllamaConfig
+    ];
 
     # Pre-pull the selected model so it's ready when needed
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
@@ -191,26 +198,26 @@ in {
       ];
       requires = [ "slm-assist.service" ];
       wantedBy = [ "graphical.target" ];
-
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.floorp}/bin/floorp --new-window ${gradioUrl}";
         # Alternative: new tab instead of new window
         # ExecStart = "${pkgs.floorp}/bin/floorp ${gradioUrl}";
-
         # Run in graphical session context
-        User = "gdm";  # adjust to your display manager user if different (gdm, sddm, lightdm...)
+        User = "gdm";  # adjust if using sddm, lightdm, etc.
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Data directory setup
+    # Data directory setup + corpus baking
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
-      "d ${cfg.dataDir} 0755 root root - -"
-      "Z ${cfg.dataDir} 0755 root root - -"
+      "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
+      # Bake the corpus file into the image (adjust path if your file is named differently)
+      "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
+      "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
     ];
 
     # ────────────────────────────────────────────────────────────────
