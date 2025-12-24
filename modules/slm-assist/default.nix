@@ -168,11 +168,19 @@ in {
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service
+    # Ollama system service (no invalid description override)
     # ────────────────────────────────────────────────────────────────
-    services.ollama = {
-      enable = true;
-    } // cfg.extraOllamaConfig;
+    services.ollama = lib.mkMerge [
+      {
+        enable = true;
+      }
+      cfg.extraOllamaConfig
+    ];
+
+    # Optional: custom systemd unit description (only if you want to change it)
+    # systemd.services.ollama = {
+    #   description = lib.mkForce "Ollama LLM Server (custom for SLM-Assist)";
+    # };
 
     # Pre-pull the selected model
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
