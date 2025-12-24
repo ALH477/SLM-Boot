@@ -34,48 +34,44 @@
     let
       system = "x86_64-linux";
 
-      # Shared modules for all graphical profiles (ISO)
       graphicalModules = [
-        "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
-        self.nixosModules.graphical-minimal
-        self.nixosModules.preload
-        self.nixosModules.containers-base
-        self.nixosModules.ollama-service
-        self.nixosModules.open-webui-service
-        self.nixosModules.auto-launch
-        self.nixosModules.hardening
-        self.nixosModules.production-extras
-        self.nixosModules.rag-dataset-tool
-        self.nixosModules.kernel-cachyos-bore
-        { boot.kernel.cachyos-bore.enable = true; }
-        # SLM-Assist configuration (with browser auto-launch on graphical)
+  "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+  self.nixosModules.graphical-minimal
+  self.nixosModules.preload
+  self.nixosModules.containers-base
+  self.nixosModules.ollama-service
+  self.nixosModules.open-webui-service
+  self.nixosModules.hardening
+  self.nixosModules.production-extras
+  self.nixosModules.rag-dataset-tool
+  self.nixosModules.kernel-cachyos-bore
+  { boot.kernel.cachyos-bore.enable = true; }
 
-{
-  # Disable ZFS support in installer to avoid broken zfs-kernel package
-  boot.supportedFilesystems.zfs = lib.mkForce false;
-  # No need for noXlibs anymore – removed
-}
+  # Disable ZFS support in the installer to avoid broken zfs-kernel package
+  ({ lib, ... }: {
+    boot.supportedFilesystems.zfs = lib.mkForce false;
+  })
 
-        {
-          imports = [ ./modules/slm-assist/default.nix ];
-          services.slm-assist = {
-            enable = true;
-            ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
-            gradioPort = 7861;
-            dataDir = "/var/lib/slm-assist";
-            exposeExternally = false;
-            delayStartSec = 45;
-            autoOpenBrowser = true;               # Opens Floorp to Gradio after delay
-          };
-          # Bake the corpus into the image
-          systemd.tmpfiles.rules = [
-            "d /var/lib/slm-assist 0755 slm-assist slm-assist - -"
-            "C /var/lib/slm-assist/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
-            "Z /var/lib/slm-assist 0755 slm-assist slm-assist - -"
-          ];
-          environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
-        }
-      ];
+  # SLM-Assist configuration (with browser auto-launch on graphical)
+  {
+    imports = [ ./modules/slm-assist/default.nix ];
+    services.slm-assist = {
+      enable = true;
+      ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
+      gradioPort = 7861;
+      dataDir = "/var/lib/slm-assist";
+      exposeExternally = false;
+      delayStartSec = 45;
+      autoOpenBrowser = true;               # Opens Floorp to Gradio after delay
+    };
+    # Bake the corpus into the image
+    systemd.tmpfiles.rules = [
+      "d /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+      "C /var/lib/slm-assist/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
+      "Z /var/lib/slm-assist 0755 slm-assist slm-assist - -"
+    ];
+  }
+];
 
       # Shared modules for headless profiles (kexec / VM / raw)
       headlessModules = [
