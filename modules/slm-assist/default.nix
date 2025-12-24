@@ -24,15 +24,19 @@
 let
   cfg = config.services.slm-assist;
 
-  # Custom dspy-ai from PyPI (not in nixpkgs)
+  # ────────────────────────────────────────────────────────────────
+  # Custom packages from PyPI (not in nixpkgs by default)
+  # ────────────────────────────────────────────────────────────────
+
+  # DSPy-ai (main RAG framework)
   dspyAi = pkgs.python312Packages.buildPythonPackage rec {
     pname = "dspy-ai";
-    version = "2.5.0";  # latest stable – check pypi.org/project/dspy-ai for updates
+    version = "2.5.0";  # latest stable as of late 2025 – check https://pypi.org/project/dspy-ai/
     format = "pyproject";
 
     src = pkgs.fetchPypi {
       inherit pname version;
-      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # REPLACE with real hash
+      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash
     };
 
     nativeBuildInputs = with pkgs.python312Packages; [
@@ -57,7 +61,7 @@ let
     doCheck = false;  # skip tests for faster image build
   };
 
-  # Custom faiss-cpu from wheel
+  # FAISS CPU version (vector database for RAG)
   faissCpu = pkgs.python312Packages.buildPythonPackage rec {
     pname = "faiss-cpu";
     version = "1.8.0";
@@ -65,15 +69,17 @@ let
 
     src = pkgs.fetchurl {
       url = "https://files.pythonhosted.org/packages/source/f/faiss-cpu/faiss_cpu-1.8.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
-      hash = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";  # REPLACE with real hash
+      hash = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";  # ← REPLACE with real hash
     };
 
-    propagatedBuildInputs = with pkgs.python312Packages; [ numpy ];
+    propagatedBuildInputs = with pkgs.python312Packages; [
+      numpy
+    ];
 
     doCheck = false;
   };
 
-  # Custom sentence-transformers from PyPI
+  # sentence-transformers (for generating embeddings)
   sentenceTransformers = pkgs.python312Packages.buildPythonPackage rec {
     pname = "sentence-transformers";
     version = "3.1.1";
@@ -81,7 +87,7 @@ let
 
     src = pkgs.fetchPypi {
       inherit pname version;
-      hash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";  # REPLACE with real hash
+      hash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";  # ← REPLACE with real hash
     };
 
     nativeBuildInputs = with pkgs.python312Packages; [
@@ -102,7 +108,7 @@ let
     doCheck = false;
   };
 
-  # Final Python environment
+  # Final Python environment with all required packages
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
     dspyAi
     faissCpu
@@ -112,10 +118,13 @@ let
     gradio
   ]);
 
+  # Path to the Gradio application script (must exist in the same directory as this file)
   scriptPath = "${./rag_app.py}";
 
+  # Whether delayed startup is active
   delayEnabled = cfg.enable && cfg.delayStartSec > 0;
 
+  # URL where Gradio will be listening (used for Floorp auto-launch)
   gradioUrl = "http://127.0.0.1:${toString cfg.gradioPort}";
 
 in {
@@ -125,7 +134,8 @@ in {
     ollamaModel = mkOption {
       type = types.str;
       default = "qwen3:0.6b-instruct-q5_K_M";
-      description = "Ollama model tag to pull and use";
+      example = "qwen3:4b-instruct-q5_K_M";
+      description = "Ollama model tag to pull and use (e.g. qwen3:4b-instruct-q5_K_M, llama3.1:8b, phi4:mini)";
     };
 
     gradioPort = mkOption {
@@ -143,56 +153,68 @@ in {
     extraOllamaConfig = mkOption {
       type = types.attrs;
       default = { };
-      description = "Extra configuration attributes passed to services.ollama";
+      description = "Extra configuration attributes passed to services.ollama (e.g. package override)";
     };
 
     exposeExternally = mkOption {
       type = types.bool;
       default = false;
-      description = "Whether to open the Gradio port in the firewall";
+      description = "Whether to open the Gradio port in the firewall (not recommended unless needed)";
     };
 
     delayStartSec = mkOption {
       type = types.int;
       default = 0;
       example = 45;
-      description = "Delay (in seconds) before starting Gradio after boot";
+      description = ''
+        Delay (in seconds) before starting the Gradio UI after boot.
+        Useful to ensure Ollama is fully initialized and responsive.
+        Set to 0 to disable delay (immediate start).
+      '';
     };
 
     autoOpenBrowser = mkOption {
       type = types.bool;
       default = false;
-      description = "Automatically open Floorp to Gradio after delay (graphical only)";
+      description = ''
+        Automatically open Floorp browser to the Gradio interface after the delay timer fires.
+        Only effective on graphical profiles (e.g. live ISO with desktop).
+      '';
     };
   };
 
   config = lib.mkIf cfg.enable {
-  # Ollama system service
-  services.ollama = lib.mkMerge [
-    {
-      enable = true;
-    }
-    cfg.extraOllamaConfig
-  ];
+    # ────────────────────────────────────────────────────────────────
+    # Ollama system service
+    # ────────────────────────────────────────────────────────────────
+    services.ollama = lib.mkMerge [
+      {
+        enable = true;
+        # Optional: choose GPU backend (uncomment one if needed)
+        # package = pkgs.ollama-cuda;   # for NVIDIA
+        # package = pkgs.ollama-rocm;   # for AMD
+      }
+      cfg.extraOllamaConfig
+    ];
 
-  # Force our preferred systemd unit description (overrides nixpkgs default)
-  systemd.services.ollama = {
-    description = lib.mkForce "Ollama LLM Server";
-  };
-
-  # Pre-pull the selected model
-  systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
-    description = "Pre-pull Ollama model for SLM Assist";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "ollama.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${pkgs.ollama}/bin/ollama pull ${cfg.ollamaModel}";
-      RemainAfterExit = true;
-      User = "ollama";
-      Group = "ollama";
+    # Force our preferred systemd unit description (overrides nixpkgs default)
+    systemd.services.ollama = {
+      description = lib.mkForce "Ollama LLM Server (custom for SLM-Assist)";
     };
-  };
+
+    # Pre-pull the selected model so it's ready when needed
+    systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
+      description = "Pre-pull Ollama model for SLM Assist";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "ollama.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.ollama}/bin/ollama pull ${cfg.ollamaModel}";
+        RemainAfterExit = true;
+        User = "ollama";
+        Group = "ollama";
+      };
+    };
 
     # ────────────────────────────────────────────────────────────────
     # Gradio RAG application service
@@ -268,7 +290,9 @@ in {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}";
-        User = "gdm";  # change to sddm/lightdm if needed
+        # Alternative: open in new tab instead of new window
+        # ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin ${gradioUrl}";
+        User = "gdm";  # adjust if using sddm, lightdm, etc.
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
