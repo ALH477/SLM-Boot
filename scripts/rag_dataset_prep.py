@@ -8,7 +8,9 @@ Supports:
 - URLs (web pages)
 - JSONL files (DSPy/RAG style: each line has a "text" field or similar)
 
-Output: semantic chunks saved as .md files in the output directory structure.
+Output: 
+- Semantic chunks saved as .md files in the output directory structure
+- Optional JSONL corpus file for direct use with RAG systems
 """
 
 import os
@@ -195,7 +197,9 @@ def process_url(url: str, session: requests.Session) -> tuple[str | None, str]:
 
 
 def process_source(source: str, output_dir: Path, max_tokens: int, overlap: int,
-                   session: requests.Session | None, jsonl_key: str = "text") -> int:
+                   session: requests.Session | None, jsonl_key: str = "text",
+                   corpus_entries: list | None = None) -> int:
+    """Process a source and optionally collect corpus entries."""
     source_path = Path(source)
     count = 0
 
@@ -232,6 +236,15 @@ def process_source(source: str, output_dir: Path, max_tokens: int, overlap: int,
                         path.write_text(chunk, encoding='utf-8')
                         logging.info(f"{file} → {path.relative_to(output_dir)}")
                         count += 1
+                        
+                        # Add to corpus if collecting
+                        if corpus_entries is not None:
+                            corpus_entries.append({
+                                "text": chunk,
+                                "source": str(file.relative_to(source_path)),
+                                "chunk_index": i if len(chunks) > 1 else 0,
+                                "total_chunks": len(chunks)
+                            })
                     except Exception as e:
                         logging.error(f"Write failed {path}: {e}")
 
@@ -259,7 +272,16 @@ def process_source(source: str, output_dir: Path, max_tokens: int, overlap: int,
                     path = output_dir / name
                     path.write_text(chunk, encoding='utf-8')
                     logging.info(f"{source_path} → {path}")
-                    count += 1  # count chunks, not lines
+                    count += 1
+                    
+                    # Add to corpus if collecting
+                    if corpus_entries is not None:
+                        corpus_entries.append({
+                            "text": chunk,
+                            "source": source_path.name,
+                            "chunk_index": i if len(chunks) > 1 else 0,
+                            "total_chunks": len(chunks)
+                        })
 
         elif source.startswith(('http://', 'https://')):
             if not session:
@@ -270,11 +292,20 @@ def process_source(source: str, output_dir: Path, max_tokens: int, overlap: int,
                 chunks = semantic_chunk_text(content, max_tokens, overlap)
                 output_dir.mkdir(parents=True, exist_ok=True)
                 for i, chunk in enumerate(chunks):
-                    name = f"{urlparse(source).netloc.replace('.', '_')}_{i+1 if len(chunks)>1 else ''}.md"
+                    name = f"{urlparse(source).netloc.replace('.', '_')}{f'_{i+1}' if len(chunks)>1 else ''}.md"
                     path = output_dir / name
                     path.write_text(chunk, encoding='utf-8')
                     logging.info(f"{source} → {path}")
                     count += 1
+                    
+                    # Add to corpus if collecting
+                    if corpus_entries is not None:
+                        corpus_entries.append({
+                            "text": chunk,
+                            "source": source,
+                            "chunk_index": i if len(chunks) > 1 else 0,
+                            "total_chunks": len(chunks)
+                        })
 
     except Exception as e:
         logging.error(f"Source processing failed {source}: {e}")
@@ -295,6 +326,8 @@ def main():
                         help="Number of sentences to overlap between chunks")
     parser.add_argument("--jsonl-key", type=str, default="text",
                         help="JSON key to extract text from in .jsonl files (default: 'text')")
+    parser.add_argument("--corpus-output", type=str,
+                        help="Path to output JSONL corpus file (e.g., corpus.jsonl)")
 
     args = parser.parse_args()
 
@@ -302,6 +335,9 @@ def main():
     total_chunks = 0
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+
+    # Collect corpus entries if requested
+    corpus_entries = [] if args.corpus_output else None
 
     for source in args.sources:
         logging.info(f"Processing source: {source}")
@@ -311,8 +347,20 @@ def main():
             args.max_tokens,
             args.overlap_sentences,
             session,
-            jsonl_key=args.jsonl_key
+            jsonl_key=args.jsonl_key,
+            corpus_entries=corpus_entries
         )
+
+    # Write corpus JSONL file if requested
+    if args.corpus_output and corpus_entries:
+        corpus_path = Path(args.corpus_output)
+        corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(corpus_path, 'w', encoding='utf-8') as f:
+            for entry in corpus_entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        
+        logging.info(f"Corpus saved: {corpus_path} ({len(corpus_entries)} entries)")
 
     logging.info(f"Processing complete: {total_chunks} chunks written to {output_path}")
 
