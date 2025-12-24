@@ -1,167 +1,168 @@
 # Offline AI Assistant Live USB
 
-**Production-Ready, Modular, Offline-First AI Assistant with Local RAG**
+**Production-Ready, Fully Offline Local AI Assistant with RAG**
 
 <img width="1920" height="1280" alt="Offline AI Assistant Desktop" src="https://github.com/user-attachments/assets/256ff118-9089-4210-a580-1e738e7be306"/>
 
-> Bootable NixOS-based live USB with fully offline LLM + RAG capabilities  
-> Built for privacy, reliability, and ease of deployment
+> Bootable NixOS live USB / VM image with local LLM, semantic RAG, and optional voice pipeline  
+> 100% offline after model baking – perfect for air-gapped, secure, or field use
 
 ## Overview
 
-This project delivers a **fully offline-capable AI assistant** packaged as bootable media (ISO, VM image, kexec bundle, raw disk).  
+This Nix flake produces **reproducible bootable images** of a privacy-focused, offline-first AI assistant:
 
-It combines:
-- **Ollama** – local LLM inference server
-- **Open WebUI** – clean, browser-based chat interface
-- **SLM-Assist** – custom DSPy-powered RAG pipeline with local embeddings (sentence-transformers + FAISS)
-- **Voice pipeline** (optional) – speech-to-text + text-to-speech
-- **RAG dataset preparation tool** – semantic chunking from PDF/HTML/MD/TXT/JSONL/URLs
-- **Automatic Floorp browser launch** to the RAG interface on graphical boot
-- **Hardened NixOS base** with CachyOS BORE kernel for responsiveness
+- **Ollama** — local LLM inference
+- **Open WebUI** — modern browser-based chat frontend
+- **SLM-Assist** — custom DSPy + Gradio RAG pipeline (sentence-transformers + FAISS)
+- **Optional voice pipeline** — STT → LLM → TTS
+- **RAG dataset preparation tool** — chunk & embed documents offline
+- **Automatic Floorp launch** to RAG interface on graphical boots
+- **CachyOS BORE kernel** — optimized for low-latency interactivity
+- **Hardened configuration** — security-focused defaults
 
-Designed for:
-- Offline use (air-gapped environments, secure research, field operations)
-- Quick deployment (live USB, VM, kexec rescue)
-- Reproducible builds via Nix flakes
+Built entirely with Nix flakes for reproducibility and easy customization.
 
 ## Key Features
 
-- **Fully offline after first model pull** (corpus and models baked in or pre-pulled)
-- **Modular NixOS services** (ollama, open-webui, slm-assist, voice pipeline)
-- **Semantic RAG dataset preparation** with sentence-aware chunking
-- **Automatic browser launch** to Gradio RAG UI after boot delay
-- **CachyOS BORE kernel** enabled everywhere for better interactivity under load
-- **Security hardening** (auditd, no-new-privileges, firewall, resource limits)
-- **Persistence guidance** for repeated live USB usage
+- Fully offline operation (models & corpus baked into the image)
+- Multiple output formats: graphical ISO, voice ISO, headless kexec, qcow2 VM, raw disk
+- Delayed Gradio startup (~45s) to ensure Ollama is ready
+- Semantic chunking for RAG corpora (PDF, MD, HTML, TXT, JSONL, URLs)
+- Automatic browser opening to http://127.0.0.1:7861 on graphical profiles
+- No internet required after build (models copied via systemd tmpfiles)
+- Persistence-ready layout (optional /persist bind-mount for live USB reuse)
 
 ## System Requirements
 
-| Component            | Minimum          | Recommended         |
-|----------------------|------------------|---------------------|
-| Architecture         | x86_64           | x86_64              |
-| RAM                  | 8 GB             | 16–32 GB            |
-| Storage (USB/VM)     | 16 GB            | 32–128 GB           |
-| CPU                  | 4 cores          | 8+ cores            |
-| GPU (optional)       | —                | NVIDIA/AMD for faster Ollama |
+| Component          | Minimum          | Recommended              |
+|--------------------|------------------|--------------------------|
+| Architecture       | x86_64           | x86_64                   |
+| RAM                | 8 GB             | 16–32 GB                 |
+| Storage (USB/VM)   | 16 GB            | 64–128 GB+ (for models)  |
+| CPU                | 4 cores          | 8+ cores (AVX2+)         |
+| GPU (optional)     | —                | NVIDIA/AMD for faster inference |
 
 ## Quick Start
 
-### 1. Build the image
+### 1. Prepare the model (offline baking – do this once on a machine with internet)
 
 ```bash
-# Update flake lockfile (recommended first time)
+# Create models folder at flake root
+mkdir -p models
+
+# Temporarily override Ollama storage location
+export OLLAMA_MODELS="$PWD/models"
+
+# Pull desired model(s) – small/quantized recommended
+ollama pull qwen3:0.6b
+# or better: ollama pull qwen3:0.6b-instruct-q5_K_M   (~400–600 MB)
+# or: ollama pull phi3:mini
+# or: ollama pull llama3.1:8b-instruct-q5_K_M
+
+# Verify
+ls -la models/blobs models/manifests
+ollama list   # should show the pulled model
+```
+
+**Important:** Do **not** commit large blob files directly unless using git-lfs.
+
+### 2. Build the image
+
+```bash
+# Update flake inputs (recommended first time)
 nix flake update
 
-# Build the main graphical ISO (with DWM desktop + auto Floorp launch)
-nix build .#packages.x86_64-linux.graphical-iso
+# Build graphical ISO (DWM desktop + auto Floorp to RAG UI)
+nix build .#graphical-iso
+# or use path: prefix if models/ is untracked:
+# nix build path:.#graphical-iso
 
-# Build voice-enabled variant
-nix build .#packages.x86_64-linux.graphical-voice-iso
+# Voice-enabled variant
+nix build .#graphical-voice-iso
 
-# Build headless VM image (great for testing in QEMU/VirtualBox)
-nix build .#packages.x86_64-linux.headless-vm
+# Headless VM image (test in QEMU)
+nix build .#headless-vm
 ```
 
-### 2. Write to USB (for live boot)
+### 3. Write to USB or run in VM
 
 ```bash
-# Replace /dev/sdX with your USB device (careful!)
-sudo dd if=result of=/dev/sdX bs=4M status=progress oflag=sync
+# Write to USB (WARNING: double-check device!)
+sudo dd if=result of=/dev/sdX bs=4M status=progress oflag=sync conv=fsync
+
+# Quick QEMU test (headless-vm)
+qemu-system-x86_64 -m 8G -drive file=result,format=qcow2 -cpu host -smp 8
 ```
 
-### 3. Boot & use
+### 4. Boot & Use
 
-- Boot from USB
-- Graphical: Wait ~45–60 seconds → Floorp should auto-open to the RAG chat UI
-- Headless: Access Open WebUI at http://localhost:3000 or via SSH/VNC (see `headless-access` module)
-- Default user: `nixos` (password forced change on first login)
+- **Graphical**: Boot → wait ~45–90 seconds → Floorp auto-opens to Gradio RAG UI (http://127.0.0.1:7861)
+- **Headless**: Access Open WebUI at http://localhost:3000 (default port)
+- Default credentials: user `nixos`, password change required on first login
+- Check Ollama: `ollama list` (should show baked-in model without pulling)
 
-## RAG Dataset Preparation Tool
+## Adding / Changing Models
 
-The included `rag-dataset-prep.py` script prepares documents for your local RAG system.
+1. Pull new model(s) into `./models/` as shown above
+2. The `modules/slm-assist/default.nix` automatically copies `./models/{blobs,manifests}` → `/var/lib/ollama/models` at boot
+3. Update config if you want to reference a different tag (mostly cosmetic):
+
+   ```nix
+   services.slm-assist.ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
+   ```
+
+4. Rebuild → the model is now baked in (no pull on boot)
+
+## Customizing the Corpus
+
+Place your JSONL corpus in `./corpus/`:
 
 ```bash
-# Prepare from local directory
-python scripts/rag_dataset_prep.py /path/to/sources/ /path/to/chunks/
-
-# Process a single JSONL corpus (DSPy style)
-python scripts/rag_dataset_prep.py corpus/ragqa_arena_tech_corpus.jsonl chunks/
-
-# From URL (requires internet)
-python scripts/rag_dataset_prep.py https://example.com/docs chunks/
+# Example: copy existing DSPy-format corpus
+mkdir -p corpus
+curl -L https://huggingface.co/dspy/cache/resolve/main/ragqa_arena_tech_corpus.jsonl \
+  -o corpus/ragqa_arena_tech_corpus.jsonl
 ```
 
-Supported formats: `.html`, `.pdf`, `.md`, `.txt`, `.jsonl`, URLs
+It's automatically copied to `/var/lib/slm-assist/` via tmpfiles.
 
-Options:
-- `--max-tokens 400` – target chunk size
-- `--overlap-sentences 3` – sentence overlap between chunks
-- `--jsonl-key content` – extract text from alternative JSON field
+For your own documents → use the preparation tool:
 
-## Building Custom Images
-
-### Change the LLM model
-
-```nix
-services.slm-assist.ollamaModel = "qwen3:4b-instruct-q5_K_M";  # or "llama3.1:8b", etc.
+```bash
+python scripts/rag_dataset_prep.py /path/to/docs/ corpus/my-corpus.jsonl \
+  --max-tokens 400 --overlap-sentences 3
 ```
 
-### Disable browser auto-launch (headless use)
+Then add to tmpfiles if needed (already handled for default corpus).
 
-```nix
-services.slm-assist.autoOpenBrowser = false;
-```
+## Security & Hardening
 
-### Add your own corpus
-
-Place it in `corpus/my-corpus.jsonl` and reference it in the tmpfiles rule:
-
-```nix
-systemd.tmpfiles.rules = [
-  "C /var/lib/slm-assist/my-corpus.jsonl - - - - ${./corpus/my-corpus.jsonl}"
-];
-```
-
-Update `rag_app.py` to load from that path if needed.
-
-## Security Notes
-
-- Firewall blocks all ports except Ollama (11434) and Open WebUI (3000) internally
-- Containers run with `--cap-drop=ALL`, `--no-new-privileges`, `--read-only`
+- Minimal attack surface (no unnecessary services/ports open)
+- `ProtectSystem=strict`, `NoNewPrivileges=true`, `DynamicUser` where possible
 - Auditd enabled for security-relevant events
-- Avoid setting `exposeExternally = true` unless you really need remote access
+- Firewall: only internal ports (11434 Ollama, 7861 Gradio, 3000 WebUI)
+- **Never** set `services.slm-assist.exposeExternally = true` on untrusted networks
 
 ## License
 
-```
-BSD 3-Clause License
+BSD 3-Clause License  
 Copyright © 2025 DeMoD LLC
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+See [LICENSE](./LICENSE) for full text.
 
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-3. Neither the name of the copyright holder nor the names of its contributors
-   may be used to endorse or promote products derived from this software
-   without specific prior written permission.
+## Troubleshooting
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```
+- **Model not found after boot**  
+  Check: `journalctl -u ollama` and `ls -la /var/lib/ollama/models/blobs`  
+  Ensure `./models` was git-added or built with `path:.`
 
-## Contact & Support
+- **Build fails with "Path ... does not exist in Git repository"**  
+  Use: `nix build path:.#graphical-iso`
 
-DeMoD LLC
+- **Slow boot / Ollama not ready**  
+  Increase `services.slm-assist.delayStartSec = 90;`
+
+## Contact
+
+DeMoD LLC  
+Issues / PRs welcome on GitHub
