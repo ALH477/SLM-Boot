@@ -6,7 +6,7 @@
   # BSD 3-Clause License
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixos-generators = {
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -28,7 +28,7 @@ services.slm-assist = {
     delayStartSec = 45;   # 45 seconds after boot — adjust to 30/60/90 as needed
   };
   # Optional: persist across reboots (if using impermanence or ZFS/btrfs)
-  # environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
+  environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
 
   outputs = { self, nixpkgs, nixos-generators, ... }:
     let
