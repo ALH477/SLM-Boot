@@ -235,7 +235,7 @@ in {
 
       # Copy your pre-downloaded model folder (adjust folder name if different)
       # Example: ./models/qwen3-0.6b must exist in the flake repo
-      "C+ /var/lib/ollama/models - - - - ${./models/qwen3-0.6b}"
+      "C+ /var/lib/ollama/models - - - - ${./models}"
     ];
 
     # ────────────────────────────────────────────────────────────────
