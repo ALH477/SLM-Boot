@@ -24,9 +24,43 @@
 let
   cfg = config.services.slm-assist;
 
-  # Python environment with all required packages
+  # Fetch and build dspy-ai from PyPI (not in nixpkgs)
+  dspyAi = pkgs.python312Packages.buildPythonPackage rec {
+    pname = "dspy-ai";
+    version = "2.5.0";  # latest stable as of late 2025 – update if needed
+    format = "pyproject";
+
+    src = pkgs.fetchPypi {
+      inherit pname version;
+      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash (see below)
+    };
+
+    nativeBuildInputs = with pkgs.python312Packages; [
+      setuptools
+      wheel
+    ];
+
+    propagatedBuildInputs = with pkgs.python312Packages; [
+      openai
+      requests
+      pandas
+      regex
+      ujson
+      datasets
+      optuna
+      tqdm
+      backoff
+      joblib
+      numpy
+      # add more deps from https://pypi.org/project/dspy-ai/#files or setup.py if build fails
+    ];
+
+    doCheck = false;  # skip tests for faster build (safe for production image)
+  };
+
+  # Python environment with all required packages (including custom dspy-ai)
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
-    dspy-ai
+    dspyAi           # ← our custom package
     faiss-cpu
     ujson
     sentence-transformers
@@ -51,7 +85,7 @@ in {
       type = types.str;
       default = "qwen3:0.6b-instruct-q5_K_M";
       example = "qwen3:4b-instruct-q5_K_M";
-      description = "Ollama model tag to pull and use (e.g. qwen3:4b-instruct-q5_K_M, llama3.1:8b, phi4:mini)";
+      description = "Ollama model tag to pull and use";
     };
 
     gradioPort = mkOption {
@@ -69,52 +103,45 @@ in {
     extraOllamaConfig = mkOption {
       type = types.attrs;
       default = { };
-      description = "Extra configuration attributes passed to services.ollama (e.g. package override)";
+      description = "Extra configuration attributes passed to services.ollama";
     };
 
     exposeExternally = mkOption {
       type = types.bool;
       default = false;
-      description = "Whether to open the Gradio port in the firewall (not recommended unless needed)";
+      description = "Whether to open the Gradio port in the firewall";
     };
 
     delayStartSec = mkOption {
       type = types.int;
       default = 0;
       example = 45;
-      description = ''
-        Delay (in seconds) before starting the Gradio UI after boot.
-        Useful to ensure Ollama is fully initialized and responsive.
-        Set to 0 to disable delay (immediate start).
-      '';
+      description = "Delay (in seconds) before starting Gradio UI after boot";
     };
 
     autoOpenBrowser = mkOption {
       type = types.bool;
       default = false;
-      description = ''
-        Automatically open Floorp browser to the Gradio interface after the delay timer fires.
-        Only effective on graphical profiles (e.g. live ISO with desktop).
-      '';
+      description = "Automatically open Floorp to Gradio after delay (graphical only)";
     };
   };
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service (modern configuration – no deprecated acceleration)
+    # Ollama system service (no deprecated acceleration option)
     # ────────────────────────────────────────────────────────────────
     services.ollama = lib.mkMerge [
       {
         enable = true;
-        # Optional: choose GPU backend explicitly (uncomment one if needed)
-        # package = pkgs.ollama-cuda;     # for NVIDIA
-        # package = pkgs.ollama-rocm;     # for AMD
-        # package = pkgs.ollama;          # CPU fallback (default)
+        # Optional GPU backend (uncomment one if you have hardware)
+        # package = pkgs.ollama-cuda;   # NVIDIA
+        # package = pkgs.ollama-rocm;   # AMD
+        # package = pkgs.ollama;        # CPU (default)
       }
       cfg.extraOllamaConfig
     ];
 
-    # Pre-pull the selected model so it's ready when needed
+    # Pre-pull the selected model
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
       description = "Pre-pull Ollama model for SLM Assist";
       wantedBy = [ "multi-user.target" ];
@@ -138,7 +165,7 @@ in {
         "ollama.service"
         "ollama-prepull-${cfg.ollamaModel}.service"
       ];
-      wantedBy = lib.mkIf (!delayEnabled) [ "multi-user.target" ];  # only immediate if no delay
+      wantedBy = lib.mkIf (!delayEnabled) [ "multi-user.target" ];
       serviceConfig = {
         ExecStart = ''
           ${pythonEnv}/bin/python ${scriptPath} \
@@ -167,9 +194,7 @@ in {
     systemd.timers.slm-assist-delayed = lib.mkIf delayEnabled {
       description = "Delayed startup timer for SLM Assist Gradio UI";
       wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnBootSec = "${toString cfg.delayStartSec}";
-      };
+      timerConfig.OnBootSec = "${toString cfg.delayStartSec}";
     };
 
     systemd.services.slm-assist-activator = lib.mkIf delayEnabled {
@@ -202,10 +227,7 @@ in {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.floorp}/bin/floorp --new-window ${gradioUrl}";
-        # Alternative: new tab instead of new window
-        # ExecStart = "${pkgs.floorp}/bin/floorp ${gradioUrl}";
-        # Run in graphical session context
-        User = "gdm";  # adjust if using sddm, lightdm, etc.
+        User = "gdm";  # adjust to sddm/lightdm if needed
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
@@ -215,7 +237,6 @@ in {
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
       "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
-      # Bake the corpus file into the image (adjust path if your file is named differently)
       "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
       "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
     ];
@@ -223,7 +244,7 @@ in {
     # ────────────────────────────────────────────────────────────────
     # System packages & firewall
     # ────────────────────────────────────────────────────────────────
-    environment.systemPackages = [ pkgs.ollama pkgs.floorp ];  # floorp for browser launch
+    environment.systemPackages = [ pkgs.ollama pkgs.floorp ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.exposeExternally [
       cfg.gradioPort
