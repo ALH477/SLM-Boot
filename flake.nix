@@ -101,7 +101,7 @@
             "C /var/lib/slm-assist/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
             "Z /var/lib/slm-assist 0755 slm-assist slm-assist - -"
           ];
-          environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
+        #  environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
         }
       ];
 
