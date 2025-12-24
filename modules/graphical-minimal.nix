@@ -24,7 +24,6 @@
   };
 
   environment.systemPackages = with pkgs; [
-    firefox
     curl
     bash
     dwm
@@ -32,6 +31,7 @@
     st
     xterm
     feh
+    floorp-bin
   ];
 
   users.users.nixos = {
