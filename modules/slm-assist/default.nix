@@ -25,10 +25,10 @@ let
   cfg = config.services.slm-assist;
 
   # ────────────────────────────────────────────────────────────────
-  # Custom packages from PyPI (not in nixpkgs by default)
+  # Custom packages from PyPI (only dspy-ai is custom – others use nixpkgs)
   # ────────────────────────────────────────────────────────────────
 
-  # DSPy-ai (main RAG framework)
+  # DSPy-ai (main RAG framework – not in nixpkgs)
   dspyAi = pkgs.python312Packages.buildPythonPackage rec {
     pname = "dspy-ai";
     version = "2.5.0";  # latest stable as of late 2025 – check https://pypi.org/project/dspy-ai/
@@ -36,7 +36,7 @@ let
 
     src = pkgs.fetchPypi {
       inherit pname version;
-      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash
+      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash from nix-prefetch-url --unpack
     };
 
     nativeBuildInputs = with pkgs.python312Packages; [
@@ -61,59 +61,12 @@ let
     doCheck = false;  # skip tests for faster image build
   };
 
-  # FAISS CPU version (vector database for RAG)
-  faissCpu = pkgs.python312Packages.buildPythonPackage rec {
-    pname = "faiss-cpu";
-    version = "1.8.0";
-    format = "wheel";
-
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/source/f/faiss-cpu/faiss_cpu-1.8.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
-      hash = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";  # ← REPLACE with real hash
-    };
-
-    propagatedBuildInputs = with pkgs.python312Packages; [
-      numpy
-    ];
-
-    doCheck = false;
-  };
-
-  # sentence-transformers (for generating embeddings)
-  sentenceTransformers = pkgs.python312Packages.buildPythonPackage rec {
-    pname = "sentence-transformers";
-    version = "3.1.1";
-    format = "pyproject";
-
-    src = pkgs.fetchPypi {
-      inherit pname version;
-      hash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";  # ← REPLACE with real hash
-    };
-
-    nativeBuildInputs = with pkgs.python312Packages; [
-      setuptools
-      wheel
-    ];
-
-    propagatedBuildInputs = with pkgs.python312Packages; [
-      transformers
-      torch
-      numpy
-      scikit-learn
-      scipy
-      nltk
-      huggingface-hub
-    ];
-
-    doCheck = false;
-  };
-
-  # Final Python environment with all required packages
+  # Final Python environment using official nixpkgs packages where possible
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
     dspyAi
-    faissCpu
+    faiss                  # official faiss (CPU version) from nixpkgs
+    sentence-transformers  # official package from nixpkgs
     ujson
-    sentenceTransformers
     numpy
     gradio
   ]);
@@ -197,7 +150,7 @@ in {
       cfg.extraOllamaConfig
     ];
 
-    # Force our preferred systemd unit description (overrides nixpkgs default)
+    # Force our preferred systemd unit description (overrides nixpkgs default if conflicting)
     systemd.services.ollama = {
       description = lib.mkForce "Ollama LLM Server (custom for SLM-Assist)";
     };
