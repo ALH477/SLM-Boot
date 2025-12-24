@@ -48,10 +48,16 @@
         self.nixosModules.rag-dataset-tool
         self.nixosModules.kernel-cachyos-bore
         { boot.kernel.cachyos-bore.enable = true; }
-        boot.supportedFilesystems.zfs = lib.mkForce false;
         # SLM-Assist configuration (with browser auto-launch on graphical)
+
         {
-          imports = [ ./slm-assist/default.nix ];
+  boot.supportedFilesystems.zfs = lib.mkForce false;
+  # optional: also disable any ZFS-related packages if present
+  environment.systemPackages = lib.mkForce [ ];  # or keep your packages
+}
+
+        {
+          imports = [ ./modules/slm-assist/default.nix ];
           services.slm-assist = {
             enable = true;
             ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
