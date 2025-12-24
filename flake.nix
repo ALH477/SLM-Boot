@@ -50,11 +50,11 @@
         { boot.kernel.cachyos-bore.enable = true; }
         # SLM-Assist configuration (with browser auto-launch on graphical)
 
-        ({ config, lib, pkgs, ... }: {
-    boot.supportedFilesystems.zfs = lib.mkForce false;
-    # Optional: prevent pulling in unnecessary X11 libs
-    environment.noXlibs = lib.mkDefault true;
-  })
+{
+  # Disable ZFS support in installer to avoid broken zfs-kernel package
+  boot.supportedFilesystems.zfs = lib.mkForce false;
+  # No need for noXlibs anymore – removed
+}
 
         {
           imports = [ ./modules/slm-assist/default.nix ];
