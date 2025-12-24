@@ -85,7 +85,7 @@
         { boot.kernel.cachyos-bore.enable = true; }
         # SLM-Assist without browser auto-launch (headless)
         {
-          imports = [ ./slm-assist/default.nix ];
+          imports = [ ./modules/slm-assist/default.nix ];
           services.slm-assist = {
             enable = true;
             ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
