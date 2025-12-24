@@ -17,14 +17,16 @@ imports = [
     ./slm-assist/default.nix
   ];
 
-  services.slm-assist = {
+services.slm-assist = {
     enable = true;
-    ollamaModel = "llama3.1:8b";          # or "phi4:mini", "gemma2:9b", etc.
+    ollamaModel = "qwen3:0.6b-instruct-q5_K_M";
     gradioPort = 7861;
-    dataDir    = "/var/lib/slm-assist";
-    exposeExternally = false;             # set true only if safe
-  };
+    dataDir = "/var/lib/slm-assist";
+    exposeExternally = false;
 
+    # ← This is the key line for delay
+    delayStartSec = 45;   # 45 seconds after boot — adjust to 30/60/90 as needed
+  };
   # Optional: persist across reboots (if using impermanence or ZFS/btrfs)
   # environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
 
