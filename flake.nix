@@ -13,6 +13,21 @@
     };
   };
 
+imports = [
+    ./slm-assist/default.nix
+  ];
+
+  services.slm-assist = {
+    enable = true;
+    ollamaModel = "llama3.1:8b";          # or "phi4:mini", "gemma2:9b", etc.
+    gradioPort = 7861;
+    dataDir    = "/var/lib/slm-assist";
+    exposeExternally = false;             # set true only if safe
+  };
+
+  # Optional: persist across reboots (if using impermanence or ZFS/btrfs)
+  # environment.persistence."/persist".directories = [ "/var/lib/slm-assist" ];
+
   outputs = { self, nixpkgs, nixos-generators, ... }:
     let
       system = "x86_64-linux";
