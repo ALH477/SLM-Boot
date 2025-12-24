@@ -25,18 +25,17 @@ let
   cfg = config.services.slm-assist;
 
   # ────────────────────────────────────────────────────────────────
-  # Custom packages from PyPI (only dspy-ai is custom – others use nixpkgs)
+  # Custom package: only dspy-ai is not in nixpkgs
   # ────────────────────────────────────────────────────────────────
 
-  # DSPy-ai (main RAG framework – not in nixpkgs)
   dspyAi = pkgs.python312Packages.buildPythonPackage rec {
     pname = "dspy-ai";
-    version = "2.5.0";  # latest stable as of late 2025 – check https://pypi.org/project/dspy-ai/
+    version = "2.5.0";  # latest stable – check https://pypi.org/project/dspy-ai/ for newer versions
     format = "pyproject";
 
     src = pkgs.fetchPypi {
       inherit pname version;
-      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # ← REPLACE with real hash from nix-prefetch-url --unpack
+      hash = "sha256-0SfExeKzt6xlxr7HmwKFCef6QjWlKAuCmumk0wpVp5M=";
     };
 
     nativeBuildInputs = with pkgs.python312Packages; [
@@ -63,9 +62,9 @@ let
 
   # Final Python environment using official nixpkgs packages where possible
   pythonEnv = pkgs.python312.withPackages (ps: with ps; [
-    dspyAi
-    faiss                  # official faiss (CPU version) from nixpkgs
-    sentence-transformers  # official package from nixpkgs
+    dspyAi                  # custom (not in nixpkgs)
+    faiss                   # official faiss (CPU version) from nixpkgs
+    sentence-transformers   # official package from nixpkgs
     ujson
     numpy
     gradio
@@ -149,11 +148,6 @@ in {
       }
       cfg.extraOllamaConfig
     ];
-
-    # Force our preferred systemd unit description (overrides nixpkgs default if conflicting)
-    systemd.services.ollama = {
-      description = lib.mkForce "Ollama LLM Server (custom for SLM-Assist)";
-    };
 
     # Pre-pull the selected model so it's ready when needed
     systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
