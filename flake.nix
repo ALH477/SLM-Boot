@@ -48,6 +48,7 @@
         self.nixosModules.rag-dataset-tool
         self.nixosModules.kernel-cachyos-bore
         { boot.kernel.cachyos-bore.enable = true; }
+        boot.supportedFilesystems.zfs = lib.mkForce false;
         # SLM-Assist configuration (with browser auto-launch on graphical)
         {
           imports = [ ./slm-assist/default.nix ];
