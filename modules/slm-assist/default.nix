@@ -20,7 +20,7 @@ in {
 
     ollamaModel = mkOption {
       type = types.str;
-      default = "llama3.1:8b";
+      default = "qwen3:0.6b-instruct-q5_K_M";
       description = "Ollama model tag to pull and use (e.g. llama3.1:8b, phi4:mini, gemma2:9b)";
     };
 
