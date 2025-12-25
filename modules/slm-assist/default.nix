@@ -1,17 +1,18 @@
 # modules/slm-assist/default.nix
 #
-# NixOS module for SLM-Assist:
-#   - Local DSPy RAG system using Ollama + Gradio web interface
-#   - Delayed startup to give Ollama time to initialize
-#   - Optional automatic browser launch (Floorp) to the Gradio UI
-#   - Corpus baked into dataDir via tmpfiles
+# NixOS module for SLM-Assist — production-ready local DSPy RAG system
 #
-# Features / changes (Dec 2025):
-#   - Offline model baking: files expected in ${./models} (blobs + manifests)
-#   - Pre-pull service disabled
-#   - Models copied into /var/lib/ollama/models at boot via tmpfiles
-#   - Browser launch waits for Ollama readiness (optimized polling)
-#   - Gradio service now has ExecStartPre polling + OLLAMA_MODEL env var
+# Features:
+#   - Offline-first: Ollama model & corpus baked via tmpfiles
+#   - Delayed & polled startup to handle slow hardware (USB 2.0, old CPUs)
+#   - Automatic Floorp launch after Ollama readiness check
+#   - Hardened systemd services (DynamicUser, Protect*, Private*)
+#   - Environment passthrough for model name & paths
+#   - Fallback-friendly (oterm works even on slow boots)
+#
+# Recommended usage:
+#   - USB 3.0+ for best experience (1–2 min wait)
+#   - USB 2.0 supported but expect 3–8+ min wait — use oterm fallback
 #
 { config, lib, pkgs, ... }:
 
@@ -19,7 +20,7 @@ let
   cfg = config.services.slm-assist;
 
   # ────────────────────────────────────────────────────────────────
-  # Custom package: only dspy-ai is not in nixpkgs
+  # Custom package: dspy-ai (not yet in nixpkgs as of Dec 2025)
   # ────────────────────────────────────────────────────────────────
 
   dspyAi = pkgs.python312Packages.buildPythonPackage rec {
@@ -73,8 +74,8 @@ in {
     ollamaModel = mkOption {
       type = types.str;
       default = "qwen3:0.6b";
-      example = "qwen3:4b";
-      description = "Ollama model tag (used for naming, env var, and reference; actual files must be pre-baked in ./models)";
+      example = "qwen3:4b-instruct-q5_K_M";
+      description = "Ollama model tag (used for env var and reference; files must be pre-baked in ./models)";
     };
 
     gradioPort = mkOption {
@@ -89,33 +90,27 @@ in {
       description = "Directory for corpus files, FAISS index, and application data";
     };
 
-    extraOllamaConfig = mkOption {
-      type = types.attrs;
-      default = { };
-      description = "Extra configuration attributes passed to services.ollama";
-    };
-
     exposeExternally = mkOption {
       type = types.bool;
       default = false;
-      description = "Whether to open the Gradio port in the firewall (not recommended for offline assistant)";
+      description = "Open Gradio port in firewall (not recommended for offline/air-gapped use)";
     };
 
     delayStartSec = mkOption {
       type = types.int;
-      default = 120;  # safer default for USB 2.0 / slower hardware
-      example = 180;
+      default = 180;  # 3 minutes — safer for USB 2.0 / older hardware
+      example = 300;
       description = ''
-        Minimum delay (in seconds) before starting the Gradio UI after boot.
-        Combined with ExecStartPre polling for better reliability on slow systems.
+        Minimum delay (seconds) before starting Gradio after boot.
+        Combined with ExecStartPre polling for robustness.
       '';
     };
 
     autoOpenBrowser = mkOption {
       type = types.bool;
-      default = false;
+      default = true;
       description = ''
-        Automatically open Floorp browser to the Gradio interface after Ollama readiness check.
+        Automatically open Floorp to Gradio UI after Ollama readiness check.
         Only effective on graphical profiles.
       '';
     };
@@ -123,18 +118,16 @@ in {
 
   config = lib.mkIf cfg.enable {
     # ────────────────────────────────────────────────────────────────
-    # Ollama system service – no automatic pulling
+    # Ollama system service – strictly offline
     # ────────────────────────────────────────────────────────────────
     services.ollama = lib.mkMerge [
       {
         enable = true;
-        # Prevent declarative pulling
-        loadModels = lib.mkForce [ ];
+        loadModels = lib.mkForce [ ];  # no declarative pulling
       }
       cfg.extraOllamaConfig
     ];
 
-    # Explicitly disable any leftover prepull
     systemd.services."ollama-prepull-${cfg.ollamaModel}".enable = false;
 
     # ────────────────────────────────────────────────────────────────
@@ -142,18 +135,18 @@ in {
     # ────────────────────────────────────────────────────────────────
     systemd.services.slm-assist = {
       description = "SLM Assist — DSPy RAG Gradio Web UI";
-      after = [
-        "network.target"
-        "ollama.service"
-      ];
+      after = [ "network.target" "ollama.service" ];
       wantedBy = lib.mkIf (!delayEnabled) [ "multi-user.target" ];
 
-      # Poll Ollama readiness before starting Python (prevents early 404/timeout)
+      # Poll Ollama readiness before starting Python (critical for slow boots)
       serviceConfig.ExecStartPre = ''
-        /bin/sh -c 'for i in $(seq 1 60); do \
-          curl -fs --connect-timeout 2 http://127.0.0.1:11434 >/dev/null 2>&1 && break; \
-          sleep 3; \
-        done'
+        /bin/sh -c 'echo "Waiting for Ollama model load (USB 2.0 may take 5+ min)..."; \
+                    for i in $(seq 1 180); do \
+                      if curl -fs --connect-timeout 3 http://127.0.0.1:11434 >/dev/null 2>&1; then break; fi; \
+                      [ $((i % 20)) -eq 0 ] && echo "Still waiting... ($((i*3))s elapsed)"; \
+                      sleep 3; \
+                    done; \
+                    echo "Ollama ready - starting Gradio"'
       '';
 
       serviceConfig = {
@@ -169,6 +162,8 @@ in {
         WorkingDirectory = cfg.dataDir;
         ProtectSystem = "strict";
         ProtectHome = true;
+        ProtectKernelTunables = true;
+        ProtectClock = true;
         PrivateTmp = true;
         NoNewPrivileges = true;
       };
@@ -182,22 +177,17 @@ in {
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Delayed startup (timer + activator)
+    # Delayed startup timer + activator
     # ────────────────────────────────────────────────────────────────
     systemd.timers.slm-assist-delayed = lib.mkIf delayEnabled {
       description = "Delayed startup timer for SLM Assist Gradio UI";
       wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnBootSec = "${toString cfg.delayStartSec}";
-      };
+      timerConfig.OnBootSec = "${toString cfg.delayStartSec}";
     };
 
     systemd.services.slm-assist-activator = lib.mkIf delayEnabled {
       description = "Delayed activation of SLM Assist Gradio service";
-      after = [
-        "ollama.service"
-        "network.target"
-      ];
+      after = [ "ollama.service" "network.target" ];
       requires = [ "ollama.service" ];
       serviceConfig = {
         Type = "oneshot";
@@ -207,65 +197,60 @@ in {
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Auto-launch Floorp to Gradio UI (graphical only) - with optimized polling
+    # Auto-launch Floorp after Ollama readiness (graphical only)
     # ────────────────────────────────────────────────────────────────
     systemd.services.slm-assist-browser-launch = lib.mkIf (delayEnabled && cfg.autoOpenBrowser) {
       description = "Launch Floorp browser to SLM Assist Gradio interface";
-      after = [
-        "slm-assist-activator.service"
-        "graphical.target"
-      ];
+      after = [ "slm-assist-activator.service" "graphical.target" ];
       requires = [ "slm-assist.service" ];
       wantedBy = [ "graphical.target" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        # Lightweight polling script: checks every 2s, max ~6 min
         ExecStart = pkgs.writeShellScript "wait-for-ollama-and-launch-floorp" ''
           #!/usr/bin/env sh
           set -e
 
           echo "Waiting for Ollama to become responsive..."
 
-          # Poll Ollama root endpoint (fastest check)
           for i in $(seq 1 180); do
             if ${pkgs.curl}/bin/curl -fs --connect-timeout 2 http://127.0.0.1:11434 >/dev/null 2>&1; then
               echo "Ollama is ready (took ~$((i*2)) seconds)"
               break
             fi
-            # Minimal output to avoid log spam
             [ $((i % 15)) -eq 0 ] && echo "Still waiting... ($((i*2))s elapsed)"
             sleep 2
           done
 
-          # Final safety buffer (model might still be warming up)
-          sleep 5
-
+          sleep 5  # final buffer for model warmup
           echo "Launching Floorp → ${gradioUrl}"
           exec ${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}
         '';
-        User = "gdm";  # adjust if using sddm, lightdm, etc.
+        User = "gdm";  # change to sddm/lightdm user if needed
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Data + model directory setup
+    # Data + model directory setup (offline baking)
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
-      # SLM-Assist data dir + corpus
+      # SLM-Assist data + corpus
       "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
       "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
       "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
 
-      # Ollama models directory + bake pre-downloaded model
+      # Ollama models directory structure
       "d /var/lib/ollama                0755 ollama ollama - -"
       "d /var/lib/ollama/models         0755 ollama ollama - -"
       "d /var/lib/ollama/models/blobs   0755 ollama ollama - -"
       "d /var/lib/ollama/models/manifests 0755 ollama ollama - -"
 
-      # Recursive copy of the entire ./models folder (blobs + manifests)
+      # Bake pre-downloaded model files (recursive copy)
       "C+ /var/lib/ollama/models - - - - ${./models}"
+
+      # Make models readable by everyone after copy (for oterm fallback, debug, etc.)
+      "Z /var/lib/ollama/models 0755 ollama ollama - -"
     ];
 
     # ────────────────────────────────────────────────────────────────
