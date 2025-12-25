@@ -7,9 +7,10 @@
 #   - Corpus baked into dataDir via tmpfiles
 #
 # Changes for offline model support (Dec 2025):
-#   - Model files are expected in ${./models/<model-name>} in the flake repo
+#   - Model files are expected in ${./models} in the flake repo
 #   - Pre-pull service is disabled
 #   - Model blobs/manifests are copied into /var/lib/ollama/models at boot
+#   - Browser launch now waits for Ollama readiness (optimized polling)
 #
 { config, lib, pkgs, ... }:
 
@@ -126,7 +127,6 @@ in {
     services.ollama = lib.mkMerge [
       {
         enable = true;
-        # Prevent any declarative model loading / pulling
         loadModels = lib.mkForce [ ];
         # Optional: GPU if needed
         # package = pkgs.ollama-cuda;
@@ -134,10 +134,7 @@ in {
       cfg.extraOllamaConfig
     ];
 
-    # Explicitly disable the old prepull service
-    systemd.services."ollama-prepull-${cfg.ollamaModel}" = {
-      enable = false;
-    };
+    systemd.services."ollama-prepull-${cfg.ollamaModel}".enable = false;
 
     # ────────────────────────────────────────────────────────────────
     # Gradio RAG application service
@@ -168,7 +165,6 @@ in {
       environment = {
         OLLAMA_HOST = "http://127.0.0.1:11434";
         PYTHONUNBUFFERED = "1";
-        # Belt-and-suspenders: tell Ollama exactly where models live
         OLLAMA_MODELS = "/var/lib/ollama/models";
       };
     };
@@ -199,7 +195,7 @@ in {
     };
 
     # ────────────────────────────────────────────────────────────────
-    # Auto-launch Floorp to Gradio UI (graphical only)
+    # Auto-launch Floorp to Gradio UI (graphical only) - with optimized polling
     # ────────────────────────────────────────────────────────────────
     systemd.services.slm-assist-browser-launch = lib.mkIf (delayEnabled && cfg.autoOpenBrowser) {
       description = "Launch Floorp browser to SLM Assist Gradio interface";
@@ -212,7 +208,30 @@ in {
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}";
+        # Lightweight polling script: checks every 2s, max ~6 min
+        ExecStart = pkgs.writeShellScript "wait-for-ollama-and-launch-floorp" ''
+          #!/usr/bin/env sh
+          set -e
+
+          echo "Waiting for Ollama to become responsive..."
+
+          # Poll Ollama root endpoint (fastest check)
+          for i in $(seq 1 180); do
+            if ${pkgs.curl}/bin/curl -fs --connect-timeout 2 http://127.0.0.1:11434 >/dev/null 2>&1; then
+              echo "Ollama is ready (took ~$((i*2)) seconds)"
+              break
+            fi
+            # Minimal output to avoid log spam
+            [ $((i % 15)) -eq 0 ] && echo "Still waiting... ($((i*2))s elapsed)"
+            sleep 2
+          done
+
+          # Final safety buffer (model might still be warming up)
+          sleep 5
+
+          echo "Launching Floorp → ${gradioUrl}"
+          exec ${pkgs.floorp-bin}/bin/floorp-bin --new-window ${gradioUrl}
+        '';
         User = "gdm";  # adjust if using sddm, lightdm, etc.
         Environment = "DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000";
       };
@@ -222,25 +241,18 @@ in {
     # Data + model directory setup
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
-      # SLM-Assist data dir + corpus
       "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
       "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
       "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
 
-      # Ollama models directory + bake pre-downloaded model
       "d /var/lib/ollama                0755 ollama ollama - -"
       "d /var/lib/ollama/models         0755 ollama ollama - -"
       "d /var/lib/ollama/models/blobs   0755 ollama ollama - -"
       "d /var/lib/ollama/models/manifests 0755 ollama ollama - -"
 
-      # Copy your pre-downloaded model folder (adjust folder name if different)
-      # Example: ./models/qwen3-0.6b must exist in the flake repo
       "C+ /var/lib/ollama/models - - - - ${./models}"
     ];
 
-    # ────────────────────────────────────────────────────────────────
-    # System packages & firewall
-    # ────────────────────────────────────────────────────────────────
     environment.systemPackages = [ pkgs.ollama pkgs.floorp-bin ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.exposeExternally [
