@@ -6,11 +6,12 @@
 #   - Optional automatic browser launch (Floorp) to the Gradio UI
 #   - Corpus baked into dataDir via tmpfiles
 #
-# Changes for offline model support (Dec 2025):
-#   - Model files are expected in ${./models} in the flake repo
-#   - Pre-pull service is disabled
-#   - Model blobs/manifests are copied into /var/lib/ollama/models at boot
-#   - Browser launch now waits for Ollama readiness (optimized polling)
+# Features / changes (Dec 2025):
+#   - Offline model baking: files expected in ${./models} (blobs + manifests)
+#   - Pre-pull service disabled
+#   - Models copied into /var/lib/ollama/models at boot via tmpfiles
+#   - Browser launch waits for Ollama readiness (optimized polling)
+#   - Gradio service now has ExecStartPre polling + OLLAMA_MODEL env var
 #
 { config, lib, pkgs, ... }:
 
@@ -73,7 +74,7 @@ in {
       type = types.str;
       default = "qwen3:0.6b";
       example = "qwen3:4b";
-      description = "Ollama model tag (used for naming and reference; actual files must be pre-baked)";
+      description = "Ollama model tag (used for naming, env var, and reference; actual files must be pre-baked in ./models)";
     };
 
     gradioPort = mkOption {
@@ -97,16 +98,16 @@ in {
     exposeExternally = mkOption {
       type = types.bool;
       default = false;
-      description = "Whether to open the Gradio port in the firewall";
+      description = "Whether to open the Gradio port in the firewall (not recommended for offline assistant)";
     };
 
     delayStartSec = mkOption {
       type = types.int;
-      default = 0;
-      example = 45;
+      default = 120;  # safer default for USB 2.0 / slower hardware
+      example = 180;
       description = ''
-        Delay (in seconds) before starting the Gradio UI after boot.
-        Useful to ensure Ollama is fully initialized and responsive.
+        Minimum delay (in seconds) before starting the Gradio UI after boot.
+        Combined with ExecStartPre polling for better reliability on slow systems.
       '';
     };
 
@@ -114,7 +115,7 @@ in {
       type = types.bool;
       default = false;
       description = ''
-        Automatically open Floorp browser to the Gradio interface after the delay timer fires.
+        Automatically open Floorp browser to the Gradio interface after Ollama readiness check.
         Only effective on graphical profiles.
       '';
     };
@@ -127,13 +128,13 @@ in {
     services.ollama = lib.mkMerge [
       {
         enable = true;
+        # Prevent declarative pulling
         loadModels = lib.mkForce [ ];
-        # Optional: GPU if needed
-        # package = pkgs.ollama-cuda;
       }
       cfg.extraOllamaConfig
     ];
 
+    # Explicitly disable any leftover prepull
     systemd.services."ollama-prepull-${cfg.ollamaModel}".enable = false;
 
     # ────────────────────────────────────────────────────────────────
@@ -146,6 +147,15 @@ in {
         "ollama.service"
       ];
       wantedBy = lib.mkIf (!delayEnabled) [ "multi-user.target" ];
+
+      # Poll Ollama readiness before starting Python (prevents early 404/timeout)
+      serviceConfig.ExecStartPre = ''
+        /bin/sh -c 'for i in $(seq 1 60); do \
+          curl -fs --connect-timeout 2 http://127.0.0.1:11434 >/dev/null 2>&1 && break; \
+          sleep 3; \
+        done'
+      '';
+
       serviceConfig = {
         ExecStart = ''
           ${pythonEnv}/bin/python ${scriptPath} \
@@ -162,10 +172,12 @@ in {
         PrivateTmp = true;
         NoNewPrivileges = true;
       };
+
       environment = {
         OLLAMA_HOST = "http://127.0.0.1:11434";
         PYTHONUNBUFFERED = "1";
         OLLAMA_MODELS = "/var/lib/ollama/models";
+        OLLAMA_MODEL = cfg.ollamaModel;  # Passed to Python for auto-detection priority
       };
     };
 
@@ -241,18 +253,24 @@ in {
     # Data + model directory setup
     # ────────────────────────────────────────────────────────────────
     systemd.tmpfiles.rules = [
+      # SLM-Assist data dir + corpus
       "d ${cfg.dataDir} 0755 slm-assist slm-assist - -"
       "C ${cfg.dataDir}/ragqa_arena_tech_corpus.jsonl - - - - ${./corpus/ragqa_arena_tech_corpus.jsonl}"
       "Z ${cfg.dataDir} 0755 slm-assist slm-assist - -"
 
+      # Ollama models directory + bake pre-downloaded model
       "d /var/lib/ollama                0755 ollama ollama - -"
       "d /var/lib/ollama/models         0755 ollama ollama - -"
       "d /var/lib/ollama/models/blobs   0755 ollama ollama - -"
       "d /var/lib/ollama/models/manifests 0755 ollama ollama - -"
 
+      # Recursive copy of the entire ./models folder (blobs + manifests)
       "C+ /var/lib/ollama/models - - - - ${./models}"
     ];
 
+    # ────────────────────────────────────────────────────────────────
+    # System packages & firewall
+    # ────────────────────────────────────────────────────────────────
     environment.systemPackages = [ pkgs.ollama pkgs.floorp-bin ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.exposeExternally [
